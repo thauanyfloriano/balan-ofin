@@ -1,0 +1,268 @@
+import * as XLSX from 'xlsx';
+
+export interface Transaction {
+  description: string;
+  value: number;
+  type: 'IN' | 'OUT';
+  source: 'EXTRATO' | 'INF' | 'PLANILHA1';
+}
+
+export interface ProcessSummary {
+  process: string;
+  totalIn: number;
+  totalOut: number;
+  balance: number;
+  hasJmCorretora: boolean;
+  transactions: Transaction[];
+  details: {
+    extratoNegativeSum: number;
+    jmTransferSum: number;
+    deltaInf: number;
+    nacionalizacaoInf: number;
+    diInf: number;
+    jmCorretoraAdjusted: boolean;
+  };
+}
+
+export async function processFinancialFile(file: File): Promise<{
+  processes: ProcessSummary[];
+  generalTotalIn: number;
+  generalTotalOut: number;
+  generalBalance: number;
+}> {
+  const data = await file.arrayBuffer();
+  const workbook = XLSX.read(data);
+  
+  const sheetData: Record<string, any[][]> = {};
+  workbook.SheetNames.forEach(name => {
+    sheetData[name] = XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1 });
+  });
+
+  const extratoSheetName = workbook.SheetNames.find(n => n.toLowerCase().includes('extrato')) || workbook.SheetNames[0];
+  const infSheetName = workbook.SheetNames.find(n => {
+    const lower = n.toLowerCase();
+    return lower.includes('inf') || lower === 'nf' || lower.includes(' nf');
+  });
+  const planilha1SheetName = workbook.SheetNames.find(n => {
+    const lower = n.toLowerCase().replace(/\s/g, '');
+    return lower === 'planilha1' || lower.includes('fixa');
+  });
+
+  const extratoRows = sheetData[extratoSheetName] || [];
+  const infRows = infSheetName ? sheetData[infSheetName] : [];
+  const planilha1Rows = planilha1SheetName ? sheetData[planilha1SheetName] : [];
+
+  const cleanValue = (val: any): number => {
+    if (typeof val === 'number') return val;
+    if (typeof val === 'string') {
+      const str = val.trim();
+      const sanitized = str.replace(/R\$\s?/, '').replace(/\./g, '').replace(',', '.').trim();
+      let num = parseFloat(sanitized);
+      if (!isNaN(num)) {
+        if (str.toUpperCase().endsWith('D') || str.toUpperCase().endsWith(' D') || str.startsWith('-')) {
+          num = -Math.abs(num);
+        } else if (str.toUpperCase().endsWith('C') || str.toUpperCase().endsWith(' C')) {
+          num = Math.abs(num);
+        }
+      }
+      return isNaN(num) ? 0 : num;
+    }
+    return 0;
+  };
+
+  const normalizePid = (pid: string): string => pid.replace(/[^a-z0-9]/gi, '').toUpperCase();
+
+  const findPidInRow = (row: any[]): string | null => {
+    if (!row || !Array.isArray(row)) return null;
+
+    const isDateAbbr = (str: string) => {
+        const months = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
+        return months.some(m => str.toUpperCase().startsWith(m));
+    };
+
+    // 1 prioritário: se está explicitamente entre parênteses
+    for (const cell of row) {
+      if (!cell) continue;
+      const val = String(cell);
+      const matchParens = val.match(/\(([^)]+)\)/);
+      if (matchParens) {
+        const norm = normalizePid(matchParens[1]);
+        if (norm && !isDateAbbr(norm)) return norm;
+      }
+    }
+
+    // 2 prioritário: buscar por regex nos índices mais comuns Col C(2), Col B(1), Col A(0)
+    const scanIndices = [2, 1, 0, 3, 4, 5, 6, 7];
+    for (const idx of scanIndices) {
+      if (idx >= row.length) continue;
+      const val = String(row[idx] || '');
+      const matchCode = val.match(/\b[A-Z]{2,}[-A-Z0-9]*\d[-A-Z0-9]*\b/i);
+      if (matchCode) {
+        let norm = normalizePid(matchCode[0]);
+        // Para caso especial como JANE / CC20250927 ou similares que possuem traços no nome (XP-TS-4)
+        // Precisamos ter certeza que letras soltas não perdem o traço se a intenção for preservá-los?
+        // Como o normalizePid já remove traços (XPTS4), todas as intersecções vão funcionar (XP-TS-4 == XPTS4).
+        if (!isDateAbbr(norm) && norm.length >= 4) return norm;
+      }
+    }
+    
+    return null;
+  };
+
+  const extratoPids = new Set<string>();
+  extratoRows.forEach(r => { const p = findPidInRow(r); if (p) extratoPids.add(p); });
+  planilha1Rows.forEach(r => { const p = findPidInRow(r); if (p) extratoPids.add(p); }); // Considera PIDs da Planilha1 úteis para a interseção
+  
+  const infPids = new Set<string>();
+  infRows.forEach(r => { const p = findPidInRow(r); if (p) infPids.add(p); });
+  const intersectionPids = new Set([...extratoPids].filter(p => infPids.has(p)));
+
+  const processMap: Record<string, ProcessSummary> = {};
+
+  const getOrCreateProcess = (pid: string) => {
+    if (!processMap[pid]) {
+      processMap[pid] = {
+        process: pid, totalIn: 0, totalOut: 0, balance: 0, hasJmCorretora: false,
+        transactions: [],
+        details: { extratoNegativeSum: 0, jmTransferSum: 0, deltaInf: 0, nacionalizacaoInf: 0, diInf: 0, jmCorretoraAdjusted: false }
+      };
+    }
+    return processMap[pid];
+  };
+
+  // Identificar colunas na planilha INF iterando os cabeçalhos
+  let deltaCol = -1, nacCol = -1, diCol = -1;
+  for (let i = 0; i < Math.min(10, infRows.length); i++) {
+     const row = infRows[i];
+     if (!Array.isArray(row)) continue;
+     row.forEach((cell, index) => {
+        if (typeof cell === 'string') {
+           const c = cell.toLowerCase().trim();
+           if (c.includes('delta')) deltaCol = index;
+           if (c.includes('nacionali') || c.includes('nac.')) nacCol = index;
+           if (/\bdi\b/.test(c) || c === 'd.i' || c === 'd.i.') diCol = index;
+        }
+     });
+     if (deltaCol !== -1 && nacCol !== -1 && diCol !== -1) break;
+  }
+  
+  // Fallback para Delta se não achar cabeçalho (pois sabemos que historicamente é Col B)
+  if (deltaCol === -1) deltaCol = 1;
+
+  // Process INF
+  infRows.forEach(row => {
+    const pid = findPidInRow(row);
+    if (!pid || !intersectionPids.has(pid)) return;
+    const p = getOrCreateProcess(pid);
+    
+    // Processa DELTA
+    if (deltaCol !== -1) {
+      const v = Math.abs(cleanValue(row[deltaCol]));
+      if (v > 0 && p.details.deltaInf === 0) {
+        p.details.deltaInf = v;
+        p.transactions.push({ description: 'DELTA (INF)', value: v, type: 'OUT', source: 'INF' });
+      }
+    }
+    
+    // Processa NACIONALIZAÇÃO
+    if (nacCol !== -1) {
+      const v = Math.abs(cleanValue(row[nacCol]));
+      if (v > 0 && p.details.nacionalizacaoInf === 0) {
+        p.details.nacionalizacaoInf = v;
+        p.transactions.push({ description: 'NACIONALIZAÇÃO (INF)', value: v, type: 'OUT', source: 'INF' });
+      }
+    }
+    
+    // Processa DI
+    if (diCol !== -1) {
+      const v = Math.abs(cleanValue(row[diCol]));
+      if (v > 0 && p.details.diInf === 0) {
+        p.details.diInf = v;
+        p.transactions.push({ description: 'DI (INF)', value: v, type: 'OUT', source: 'INF' });
+      }
+    }
+  });
+
+  // Função auxiliar para processar linhas com padrão Col D = Entrada, Col E = Saída
+  const processRowLogic = (row: any[], sourceName: 'EXTRATO' | 'PLANILHA1') => {
+    const pid = findPidInRow(row);
+    if (!pid || !intersectionPids.has(pid)) return;
+    const p = getOrCreateProcess(pid);
+    
+    // Coluna D (index 3) = ENTRADAS
+    const valIn = Math.abs(cleanValue(row[3]));
+    // Coluna E (index 4) = SAÍDAS
+    const valOut = Math.abs(cleanValue(row[4]));
+    
+    // Identificação de descrição para regras (Nacionalização, JM Corretora, etc)
+    const descFull = row.filter(c => c && typeof c === 'string').join(' ');
+    const desc = descFull.toLowerCase();
+    const shortDesc = String(row[2] || row[1] || (valIn > 0 ? 'Entrada' : 'Saída'));
+
+    if (desc.includes('jm corretora')) p.hasJmCorretora = true;
+
+    if (valIn > 0) {
+      p.totalIn += valIn;
+      p.transactions.push({ description: shortDesc, value: valIn, type: 'IN', source: sourceName });
+    }
+
+    if (valOut > 0) {
+      if (!desc.includes('nacionalização') && !desc.includes('nacionalisacao')) {
+        if (desc.includes('jm corretora')) {
+          p.details.jmTransferSum += valOut;
+        }
+        p.details.extratoNegativeSum += valOut;
+        p.transactions.push({ description: shortDesc, value: valOut, type: 'OUT', source: sourceName });
+      } else {
+         p.transactions.push({ description: `${shortDesc} (Ignorado ${sourceName})`, value: valOut, type: 'OUT', source: sourceName });
+      }
+    }
+  };
+
+  // Process EXTRATO
+  extratoRows.forEach(row => processRowLogic(row, 'EXTRATO'));
+
+  // Process Planilha1 / Fixa
+  planilha1Rows.forEach(row => processRowLogic(row, 'PLANILHA1'));
+
+  const processesList = Object.values(processMap).map(p => {
+    let finalDi = p.details.diInf;
+    if (p.hasJmCorretora) {
+       finalDi = 0; // Ignora DI porque a transferência JM assume este custo
+       p.details.jmCorretoraAdjusted = true;
+       p.transactions.push({ description: 'DI (INF) - IGNORADA (Substituída pelo valor transferido à JM)', value: 0, type: 'OUT', source: 'INF' });
+    }
+    p.totalOut = p.details.extratoNegativeSum + p.details.deltaInf + p.details.nacionalizacaoInf + finalDi;
+    p.balance = p.totalIn - p.totalOut;
+    return p;
+  });
+
+  return {
+    processes: processesList,
+    generalTotalIn: processesList.reduce((s, p) => s + p.totalIn, 0),
+    generalTotalOut: processesList.reduce((s, p) => s + p.totalOut, 0),
+    generalBalance: processesList.reduce((s, p) => s + p.balance, 0)
+  };
+}
+
+export function exportReportToExcel(report: any) {
+  const wsData = report.processes.map((p: ProcessSummary) => {
+    let finalDi = p.details.diInf;
+    if (p.hasJmCorretora) finalDi = 0;
+    
+    return {
+      'PROCESSO': p.process,
+      'DELTA (R$)': p.details.deltaInf || 0,
+      'NACIONALIZAÇÃO (R$)': p.details.nacionalizacaoInf || 0,
+      'DI (R$)': finalDi,
+      'ENTRADAS (R$)': p.totalIn,
+      'SAÍDAS (R$)': p.totalOut,
+      'SALDO (R$)': p.balance
+    };
+  });
+
+  const ws = XLSX.utils.json_to_sheet(wsData);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Balancete");
+  XLSX.writeFile(wb, "Balancete_Financeiro.xlsx");
+}
