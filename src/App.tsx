@@ -9,6 +9,7 @@ const App: React.FC = () => {
   const [report, setReport] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [showReceberDiff, setShowReceberDiff] = useState(false);
   const [aiDiagnosis, setAiDiagnosis] = useState<string | null>(null);
   const [loadingAi, setLoadingAi] = useState(false);
 
@@ -102,7 +103,10 @@ const App: React.FC = () => {
                 <button className="btn outline" onClick={() => exportReportToExcel(report)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', borderColor: 'rgba(255,255,255,0.2)' }}>
                   <Download size={18} /> Exportar Excel
                 </button>
-                <button className="btn outline" onClick={() => { setReport(null); setSearchTerm(''); setAiDiagnosis(null); }}>Refazer</button>
+                <button className="btn outline" onClick={() => setShowReceberDiff(!showReceberDiff)} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', borderColor: showReceberDiff ? 'var(--primary)' : 'rgba(255,255,255,0.2)' }}>
+                  Valor a Receber
+                </button>
+                <button className="btn outline" onClick={() => { setReport(null); setSearchTerm(''); setAiDiagnosis(null); setShowReceberDiff(false); }}>Refazer</button>
               </div>
 
               <div className="card" style={{ marginBottom: '1.5rem', background: 'linear-gradient(135deg, rgba(88,101,242,0.1) 0%, rgba(138,43,226,0.1) 100%)', border: '1px solid rgba(88,101,242,0.2)' }}>
@@ -125,6 +129,69 @@ const App: React.FC = () => {
                   </div>
                 )}
               </div>
+
+              {showReceberDiff && report && (
+                <div className="card" style={{ marginBottom: '1.5rem', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--primary)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
+                    <h3 style={{ margin: 0, color: '#fff' }}>Valores Pendentes (Diferença NF vs Extrato)</h3>
+                    {report.nfSummaries && (
+                      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                        <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem 1rem', borderRadius: '0.5rem', border: '1px solid var(--glass-border)', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>TOTAL RECEBIDO:</span>
+                          <span style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--success)' }}>
+                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+                              report.nfSummaries.reduce((sum: number, nf: any) => sum + nf.receivedValue, 0)
+                            )}
+                          </span>
+                        </div>
+                        <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem 1rem', borderRadius: '0.5rem', border: '1px solid var(--glass-border)', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>TOTAL A RECEBER:</span>
+                          <span style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--error)' }}>
+                            {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(
+                              report.nfSummaries.reduce((sum: number, nf: any) => sum + (nf.diff > 0 ? nf.diff : 0), 0)
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {report.nfSummaries && report.nfSummaries.filter((nf: any) => Math.abs(nf.diff) > 0.01).length === 0 ? (
+                     <p style={{ opacity: 0.8 }}>Nenhuma diferença encontrada entre Nota Emitida (Aba NF) e Valor Recebido (Extrato).</p>
+                  ) : (
+                    <div className="process-table-container">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Nº NOTA</th>
+                            <th>PROCESSO</th>
+                            <th>CLIENTE</th>
+                            <th style={{ textAlign: 'right' }}>NOTA EMITIDA (COL E)</th>
+                            <th style={{ textAlign: 'right' }}>RECEBIDO (EXTRATO)</th>
+                            <th style={{ textAlign: 'right' }}>DIFERENÇA</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {report.nfSummaries && report.nfSummaries.filter((nf: any) => Math.abs(nf.diff) > 0.01).map((nf: any) => {
+                            return (
+                              <tr key={'nf_' + nf.nfNumber}>
+                                <td style={{ fontWeight: 600 }}>{nf.nfNumber}</td>
+                                <td>{nf.processId || '-'}</td>
+                                <td>{nf.clientName}</td>
+                                <td style={{ textAlign: 'right', opacity: 0.8 }}>{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(nf.emittedValue)}</td>
+                                <td style={{ textAlign: 'right' }} className="success">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(nf.receivedValue)}</td>
+                                <td style={{ textAlign: 'right', fontWeight: 700, color: nf.diff > 0 ? 'var(--error)' : 'var(--success)' }}>
+                                  {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Math.abs(nf.diff))}
+                                  {nf.diff > 0 ? ' a receber' : ' recebido a mais'}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {report.processes.length === 0 ? (
                 <div style={{ padding: '3rem', textAlign: 'center', opacity: 0.6 }}>

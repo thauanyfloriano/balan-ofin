@@ -24,8 +24,18 @@ export interface ProcessSummary {
   };
 }
 
+export interface NFSummary {
+  nfNumber: string;
+  clientName: string;
+  emittedValue: number;
+  receivedValue: number;
+  diff: number;
+  processId?: string;
+}
+
 export async function processFinancialFile(file: File): Promise<{
   processes: ProcessSummary[];
+  nfSummaries: NFSummary[];
   generalTotalIn: number;
   generalTotalOut: number;
   generalBalance: number;
@@ -41,7 +51,11 @@ export async function processFinancialFile(file: File): Promise<{
   const extratoSheetName = workbook.SheetNames.find(n => n.toLowerCase().includes('extrato')) || workbook.SheetNames[0];
   const infSheetName = workbook.SheetNames.find(n => {
     const lower = n.toLowerCase();
-    return lower.includes('inf') || lower === 'nf' || lower.includes(' nf');
+    return lower.includes('inf');
+  });
+  const nfSheetName = workbook.SheetNames.find(n => {
+    const lower = n.toLowerCase();
+    return lower === 'nf' || lower.includes(' aba nf') || lower.includes('nota');
   });
   const planilha1SheetName = workbook.SheetNames.find(n => {
     const lower = n.toLowerCase().replace(/\s/g, '');
@@ -50,6 +64,7 @@ export async function processFinancialFile(file: File): Promise<{
 
   const extratoRows = sheetData[extratoSheetName] || [];
   const infRows = infSheetName ? sheetData[infSheetName] : [];
+  const nfRows = nfSheetName ? sheetData[nfSheetName] : [];
   const planilha1Rows = planilha1SheetName ? sheetData[planilha1SheetName] : [];
 
   const cleanValue = (val: any): number => {
@@ -181,6 +196,7 @@ export async function processFinancialFile(file: File): Promise<{
         p.transactions.push({ description: 'DI (INF)', value: v, type: 'OUT', source: 'INF' });
       }
     }
+
   });
 
   // Função auxiliar para processar linhas com padrão Col D = Entrada, Col E = Saída
@@ -193,11 +209,19 @@ export async function processFinancialFile(file: File): Promise<{
     const valIn = Math.abs(cleanValue(row[3]));
     // Coluna E (index 4) = SAÍDAS
     const valOut = Math.abs(cleanValue(row[4]));
+
     
     // Identificação de descrição para regras (Nacionalização, JM Corretora, etc)
     const descFull = row.filter(c => c && typeof c === 'string').join(' ');
+    const colC = String(row[2] || '').toLowerCase();
     const desc = descFull.toLowerCase();
     const shortDesc = String(row[2] || row[1] || (valIn > 0 ? 'Entrada' : 'Saída'));
+
+    // Regra: Se a coluna C contém "delta", não entra na soma (geralmente processado via INF)
+    if (colC.includes('delta')) {
+      p.transactions.push({ description: `${shortDesc} (Ignorado Delta)`, value: Math.max(valIn, valOut), type: valIn > 0 ? 'IN' : 'OUT', source: sourceName });
+      return;
+    }
 
     if (desc.includes('jm corretora')) p.hasJmCorretora = true;
 
@@ -237,8 +261,54 @@ export async function processFinancialFile(file: File): Promise<{
     return p;
   });
 
+  // ========== LÓGICA DE NOTAS FISCAIS (ABA NF) ==========
+  const nfMap: Record<string, NFSummary> = {};
+  
+  nfRows.forEach(row => {
+    if (!Array.isArray(row)) return;
+    const nfNumber = String(row[0] || '').trim();
+    const emittedValue = Math.abs(cleanValue(row[4]));
+    const clientName = String(row[2] || '').trim();
+    
+    // Validar se realmente é uma linha de Nota (nfNumber deve ser numérico ou conter algo válido)
+    if (nfNumber && !isNaN(Number(nfNumber)) && emittedValue > 0) {
+      if (!nfMap[nfNumber]) {
+        nfMap[nfNumber] = { nfNumber, clientName, emittedValue, receivedValue: 0, diff: 0 };
+      } else {
+        nfMap[nfNumber].emittedValue += emittedValue;
+      }
+    }
+  });
+
+  // Cruzar com o Extrato para achar os recebimentos do PIX
+  extratoRows.forEach(row => {
+    if (!Array.isArray(row)) return;
+    const valIn = Math.abs(cleanValue(row[3]));
+    if (valIn === 0) return; // Só queremos Entradas (recebimentos)
+    
+    const descFull = row.filter(c => c && typeof c === 'string').join(' ').toLowerCase();
+    
+    // Procura por "nf568", "nf 568", etc.
+    for (const nfNumber of Object.keys(nfMap)) {
+      if (descFull.includes(`nf${nfNumber}`) || descFull.includes(`nf ${nfNumber}`)) {
+         nfMap[nfNumber].receivedValue += valIn;
+         const pidMatch = findPidInRow(row);
+         if (pidMatch && !nfMap[nfNumber].processId) {
+           nfMap[nfNumber].processId = pidMatch;
+         }
+      }
+    }
+  });
+
+  const nfSummaries = Object.values(nfMap).map(nf => {
+    nf.diff = nf.emittedValue - nf.receivedValue;
+    return nf;
+  });
+  // =======================================================
+
   return {
     processes: processesList,
+    nfSummaries,
     generalTotalIn: processesList.reduce((s, p) => s + p.totalIn, 0),
     generalTotalOut: processesList.reduce((s, p) => s + p.totalOut, 0),
     generalBalance: processesList.reduce((s, p) => s + p.balance, 0)
@@ -264,5 +334,23 @@ export function exportReportToExcel(report: any) {
   const ws = XLSX.utils.json_to_sheet(wsData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Balancete");
+
+  // Adiciona a aba 'Valores Pendentes' se existirem notas com diferenças
+  if (report.nfSummaries && report.nfSummaries.length > 0) {
+    const pendencias = report.nfSummaries.filter((nf: any) => Math.abs(nf.diff) > 0.01);
+    if (pendencias.length > 0) {
+      const wsPendenciasData = pendencias.map((nf: any) => ({
+        'Nº NOTA': nf.nfNumber,
+        'PROCESSO': nf.processId || '-',
+        'CLIENTE': nf.clientName,
+        'NOTA EMITIDA (R$)': nf.emittedValue,
+        'RECEBIDO (R$)': nf.receivedValue,
+        'DIFERENÇA (R$)': nf.diff
+      }));
+      const wsPendencias = XLSX.utils.json_to_sheet(wsPendenciasData);
+      XLSX.utils.book_append_sheet(wb, wsPendencias, "Valores Pendentes");
+    }
+  }
+
   XLSX.writeFile(wb, "Balancete_Financeiro.xlsx");
 }
