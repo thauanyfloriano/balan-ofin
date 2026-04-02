@@ -1,12 +1,85 @@
 <!doctype html>
-<html lang="en">
+<html lang="pt-BR" class="dark">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>balan-o</title>
+    <title>Balance Sheet</title>
+    
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-error-container": "#ffb2b9",
+                        "surface-container-highest": "#23262e",
+                        "secondary-fixed-dim": "#58e7ab",
+                        "outline": "#74757d",
+                        "outline-variant": "#46484f",
+                        "on-secondary-fixed": "#00452d",
+                        "on-tertiary-container": "#1f0001",
+                        "background": "#0c0e14",
+                        "on-primary-fixed": "#000000",
+                        "on-error": "#490013",
+                        "error": "#ff6e84",
+                        "surface-container-low": "#11131a",
+                        "tertiary-fixed": "#ff928b",
+                        "inverse-primary": "#6e3bd7",
+                        "inverse-surface": "#faf8ff",
+                        "tertiary": "#ff716a",
+                        "surface-container-lowest": "#000000",
+                        "primary": "#ba9eff",
+                        "secondary": "#69f6b8",
+                        "surface-variant": "#23262e",
+                        "primary-fixed-dim": "#a27cff",
+                        "on-background": "#e5e4ed",
+                        "error-dim": "#d73357",
+                        "tertiary-dim": "#ff716a",
+                        "surface-container": "#171921",
+                        "secondary-dim": "#58e7ab",
+                        "on-secondary-fixed-variant": "#006544",
+                        "surface-container-high": "#1d1f27",
+                        "tertiary-fixed-dim": "#ff7b74",
+                        "on-tertiary": "#490005",
+                        "secondary-fixed": "#69f6b8",
+                        "primary-fixed": "#ae8dff",
+                        "secondary-container": "#006c49",
+                        "error-container": "#a70138",
+                        "tertiary-container": "#fd4e4d",
+                        "on-primary-container": "#2b006e",
+                        "surface-tint": "#ba9eff",
+                        "on-surface": "#e5e4ed",
+                        "on-surface-variant": "#aaaab3",
+                        "surface-bright": "#292c35",
+                        "on-primary": "#39008c",
+                        "on-tertiary-fixed-variant": "#79000e",
+                        "on-secondary-container": "#e1ffec",
+                        "inverse-on-surface": "#53555c",
+                        "surface-dim": "#0c0e14",
+                        "on-secondary": "#005a3c",
+                        "primary-container": "#ae8dff",
+                        "primary-dim": "#8455ef",
+                        "on-tertiary-fixed": "#3a0003",
+                        "on-primary-fixed-variant": "#370086",
+                        "surface": "#0c0e14"
+                    },
+                    fontFamily: {
+                        "headline": ["Manrope"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+                },
+            },
+        }
+    </script>
   </head>
-  <body>
+  <body class="bg-[#0c0e14] text-[#e5e4ed] font-['Inter']">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

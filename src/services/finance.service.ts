@@ -12,6 +12,7 @@ export interface ProcessSummary {
   totalIn: number;
   totalOut: number;
   balance: number;
+  estimatedProfit: number;
   hasJmCorretora: boolean;
   transactions: Transaction[];
   details: {
@@ -114,9 +115,6 @@ export async function processFinancialFile(file: File): Promise<{
       const matchCode = val.match(/\b[A-Z]{2,}[-A-Z0-9]*\d[-A-Z0-9]*\b/i);
       if (matchCode) {
         let norm = normalizePid(matchCode[0]);
-        // Para caso especial como JANE / CC20250927 ou similares que possuem traços no nome (XP-TS-4)
-        // Precisamos ter certeza que letras soltas não perdem o traço se a intenção for preservá-los?
-        // Como o normalizePid já remove traços (XPTS4), todas as intersecções vão funcionar (XP-TS-4 == XPTS4).
         if (!isDateAbbr(norm) && norm.length >= 4) return norm;
       }
     }
@@ -137,7 +135,7 @@ export async function processFinancialFile(file: File): Promise<{
   const getOrCreateProcess = (pid: string) => {
     if (!processMap[pid]) {
       processMap[pid] = {
-        process: pid, totalIn: 0, totalOut: 0, balance: 0, hasJmCorretora: false,
+        process: pid, totalIn: 0, totalOut: 0, balance: 0, estimatedProfit: 0, hasJmCorretora: false,
         transactions: [],
         details: { extratoNegativeSum: 0, jmTransferSum: 0, deltaInf: 0, nacionalizacaoInf: 0, diInf: 0, jmCorretoraAdjusted: false }
       };
@@ -258,6 +256,7 @@ export async function processFinancialFile(file: File): Promise<{
     }
     p.totalOut = p.details.extratoNegativeSum + p.details.deltaInf + p.details.nacionalizacaoInf + finalDi;
     p.balance = p.totalIn - p.totalOut;
+    p.estimatedProfit = p.balance; // Will be updated later
     return p;
   });
 
@@ -273,7 +272,12 @@ export async function processFinancialFile(file: File): Promise<{
     // Validar se realmente é uma linha de Nota (nfNumber deve ser numérico ou conter algo válido)
     if (nfNumber && !isNaN(Number(nfNumber)) && emittedValue > 0) {
       if (!nfMap[nfNumber]) {
-        nfMap[nfNumber] = { nfNumber, clientName, emittedValue, receivedValue: 0, diff: 0 };
+        // Find PID in the NF row directly if possible
+        const pidMatch = findPidInRow(row);
+        
+        // Ensure that if it matches, it is added to process map if missing?
+        // Wait, if it wasn't in Extrato/INF cross, maybe it's completely missing, but we only calculate estimatedProfit for known processes
+        nfMap[nfNumber] = { nfNumber, clientName, emittedValue, receivedValue: 0, diff: 0, processId: pidMatch || undefined };
       } else {
         nfMap[nfNumber].emittedValue += emittedValue;
       }
@@ -303,6 +307,13 @@ export async function processFinancialFile(file: File): Promise<{
   const nfSummaries = Object.values(nfMap).map(nf => {
     nf.diff = nf.emittedValue - nf.receivedValue;
     return nf;
+  });
+
+  // Update Estimated Profit
+  processesList.forEach(p => {
+    const processNFs = nfSummaries.filter(nf => nf.processId === p.process && nf.diff > 0);
+    const pendingNfSum = processNFs.reduce((sum, nf) => sum + nf.diff, 0);
+    p.estimatedProfit = p.balance + pendingNfSum;
   });
   // =======================================================
 
