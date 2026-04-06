@@ -17,6 +17,7 @@ const App: React.FC = () => {
   const [aiDiagnosis, setAiDiagnosis] = useState<string | null>(null);
   const [loadingAi, setLoadingAi] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [expandedProcess, setExpandedProcess] = useState<string | null>(null);
 
   const handleGenerateDiagnosis = async () => {
     if (!report) return;
@@ -111,7 +112,7 @@ const App: React.FC = () => {
             </div>
             {report && (
               <button 
-                onClick={() => { setReport(null); setSearchTerm(''); setAiDiagnosis(null); setShowReceberDiff(false); setShowEstimativa(false); setFileName(null); }}
+                onClick={() => { setReport(null); setSearchTerm(''); setAiDiagnosis(null); setShowReceberDiff(false); setShowEstimativa(false); setFileName(null); setExpandedProcess(null); }}
                 className="bg-surface-container-low text-white border border-white/10 px-4 py-2 rounded-md text-xs font-bold hover:bg-white/5 transition-all"
               >
                 Limpar
@@ -320,9 +321,6 @@ const App: React.FC = () => {
                       <thead>
                         <tr className="bg-surface-container-low/50">
                           <th className="px-6 py-4 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">ID PROCESSO</th>
-                          <th className="px-6 py-4 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest text-right">DELTA</th>
-                          <th className="px-6 py-4 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest text-right">NACIONALIZAÇÃO</th>
-                          <th className="px-6 py-4 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest text-right">DI</th>
                           <th className="px-6 py-4 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest text-right">ENTRADAS</th>
                           <th className="px-6 py-4 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest text-right">SAÍDAS</th>
                           <th className="px-6 py-4 text-[10px] font-bold text-on-surface-variant uppercase tracking-widest text-right">SALDO</th>
@@ -334,38 +332,113 @@ const App: React.FC = () => {
                       <tbody className="divide-y divide-white/5">
                         {filteredProcesses.map((p: any) => {
                           let finalDi = p.details?.diInf || 0;
+                          let diDesc = finalDi > 0 ? "DI em aberto" : "";
                           if (p.hasJmCorretora) {
-                            finalDi = 0;
+                            finalDi = p.details?.jmTransferSum || 0;
+                            diDesc = "Valor na JM";
                           }
+                          const isExpanded = expandedProcess === p.process;
                           return (
-                            <tr key={p.process} className="hover:bg-white/[0.02] transition-colors group">
-                              <td className="px-6 py-4 font-mono text-xs text-primary font-bold">{p.process}</td>
-                              <td className="px-6 py-4 text-xs font-medium text-right text-slate-300">{formatCurrency(p.details?.deltaInf || 0)}</td>
-                              <td className="px-6 py-4 text-xs text-right text-slate-300">{formatCurrency(p.details?.nacionalizacaoInf || 0)}</td>
-                              <td className="px-6 py-4 text-xs font-mono text-right text-slate-300">
-                                {formatCurrency(finalDi)}
-                                {p.hasJmCorretora && <span className="block text-[10px] text-on-surface-variant mt-1" title="A transferência JM no extrato já cobre este valor">Valor na JM</span>}
-                              </td>
-                              <td className="px-6 py-4 text-xs font-bold text-right text-secondary-fixed">{formatCurrency(p.totalIn)}</td>
-                              <td className="px-6 py-4 text-xs font-bold text-right text-tertiary-dim">{formatCurrency(p.totalOut)}</td>
-                              <td className="px-6 py-4 text-right">
-                                <span className={`px-3 py-1 rounded-full text-[10px] font-bold whitespace-nowrap ${p.balance >= 0 ? 'bg-secondary/10 text-secondary' : 'bg-tertiary/10 text-tertiary'}`}>
-                                  {p.balance > 0 ? '+' : ''}{formatCurrency(p.balance)}
-                                </span>
-                              </td>
-                              {showEstimativa && (
+                            <React.Fragment key={p.process}>
+                              <tr 
+                                onClick={() => setExpandedProcess(isExpanded ? null : p.process)} 
+                                className={`transition-colors group cursor-pointer ${isExpanded ? 'bg-primary/5' : 'hover:bg-white/[0.02]'}`}
+                              >
+                                <td className="px-6 py-4 font-mono text-xs text-primary font-bold flex items-center gap-2">
+                                  <span className={`material-symbols-outlined text-sm transition-transform ${isExpanded ? 'rotate-180' : ''}`}>expand_more</span>
+                                  {p.process}
+                                </td>
+                                <td className="px-6 py-4 text-xs font-bold text-right text-secondary-fixed">{formatCurrency(p.totalIn)}</td>
+                                <td className="px-6 py-4 text-xs font-bold text-right text-tertiary-dim">{formatCurrency(p.totalOut)}</td>
                                 <td className="px-6 py-4 text-right">
-                                  <span className={`px-3 py-1 rounded-full text-[10px] font-bold whitespace-nowrap bg-primary/10 text-primary border border-primary/20`}>
-                                    {p.estimatedProfit > 0 ? '+' : ''}{formatCurrency(p.estimatedProfit)}
+                                  <span className={`px-3 py-1 rounded-full text-[10px] font-bold whitespace-nowrap ${p.balance >= 0 ? 'bg-secondary/10 text-secondary' : 'bg-tertiary/10 text-tertiary'}`}>
+                                    {p.balance > 0 ? '+' : ''}{formatCurrency(p.balance)}
                                   </span>
                                 </td>
+                                {showEstimativa && (
+                                  <td className="px-6 py-4 text-right">
+                                    <span className={`px-3 py-1 rounded-full text-[10px] font-bold whitespace-nowrap bg-primary/10 text-primary border border-primary/20`}>
+                                      {p.estimatedProfit > 0 ? '+' : ''}{formatCurrency(p.estimatedProfit)}
+                                    </span>
+                                  </td>
+                                )}
+                              </tr>
+                              {isExpanded && (
+                                <tr className="bg-[#0c0e14]/50 border-b border-primary/20">
+                                  <td colSpan={showEstimativa ? 5 : 4} className="px-8 py-6">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                      {/* CUSTOS INF */}
+                                      <div>
+                                        <h4 className="text-[10px] font-bold text-primary uppercase tracking-widest mb-3 flex items-center gap-2"><span className="material-symbols-outlined text-sm">receipt_long</span> Valores Ocultos (INF)</h4>
+                                        <div className="space-y-2 bg-[#0c0e14] p-4 rounded-xl border border-white/5">
+                                          <div className="flex justify-between items-center text-xs">
+                                            <span className="text-slate-400">DELTA:</span>
+                                            <span className="font-medium text-slate-300">{formatCurrency(p.details?.deltaInf || 0)}</span>
+                                          </div>
+                                          <div className="flex justify-between items-center text-xs border-t border-white/5 pt-2">
+                                            <span className="text-slate-400">NACIONALIZAÇÃO:</span>
+                                            <span className="font-medium text-slate-300">{formatCurrency(p.details?.nacionalizacaoInf || 0)}</span>
+                                          </div>
+                                          <div className="flex justify-between items-center text-xs border-t border-white/5 pt-2">
+                                            <span className="text-slate-400">DI:</span>
+                                            <div className="text-right">
+                                              <span className="font-medium text-slate-300">{formatCurrency(finalDi)}</span>
+                                              {diDesc && <span className="block text-[9px] text-primary/80 mt-0.5">{diDesc}</span>}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Mapeamento de Transações */}
+                                      <div>
+                                        <h4 className="text-[10px] font-bold text-secondary uppercase tracking-widest mb-3 flex items-center gap-2"><span className="material-symbols-outlined text-sm">list_alt</span> Movimentações Consideradas</h4>
+                                        <div className="space-y-4">
+                                          <div>
+                                            <h5 className="text-[9px] text-secondary-fixed/70 uppercase tracking-widest mb-2 font-bold pl-2 border-l-2 border-secondary/30">Entradas Identificadas</h5>
+                                            <ul className="space-y-1">
+                                              {p.transactions.filter((t: any) => t.type === 'IN' && !t.description.toLowerCase().includes('ignora')).map((t: any, idx: number) => (
+                                                <li key={`in-${idx}`} className="flex flex-col sm:flex-row sm:items-center sm:justify-between text-xs bg-white/[0.02] hover:bg-white/[0.05] p-2 rounded-md transition-colors gap-1">
+                                                  <span className="text-slate-400 truncate max-w-[200px] sm:max-w-[250px]" title={t.description}>
+                                                    <span className="text-[8px] bg-secondary/10 text-secondary px-1 py-0.5 rounded border border-secondary/20 mr-2 uppercase">{t.source}</span>
+                                                    {t.description}
+                                                  </span>
+                                                  <span className="text-secondary-fixed font-mono font-bold sm:text-right">{formatCurrency(t.value)}</span>
+                                                </li>
+                                              ))}
+                                              {p.transactions.filter((t: any) => t.type === 'IN' && !t.description.toLowerCase().includes('ignora')).length === 0 && (
+                                                <li className="text-xs text-slate-500 italic p-2">Nenhuma entrada contabilizada.</li>
+                                              )}
+                                            </ul>
+                                          </div>
+                                          <div>
+                                            <h5 className="text-[9px] text-tertiary/70 uppercase tracking-widest mb-2 font-bold pl-2 border-l-2 border-tertiary/30">Saídas / Descontos Identificados</h5>
+                                            <ul className="space-y-1">
+                                              {p.transactions.filter((t: any) => t.type === 'OUT' && !t.description.toLowerCase().includes('ignora')).map((t: any, idx: number) => (
+                                                <li key={`out-${idx}`} className="flex flex-col sm:flex-row sm:items-center sm:justify-between text-xs bg-white/[0.02] hover:bg-white/[0.05] p-2 rounded-md transition-colors gap-1">
+                                                  <span className="text-slate-400 truncate max-w-[200px] sm:max-w-[250px]" title={t.description}>
+                                                    <span className="text-[8px] bg-tertiary/10 text-tertiary px-1 py-0.5 rounded border border-tertiary/20 mr-2 uppercase">{t.source}</span>
+                                                    {t.description}
+                                                  </span>
+                                                  <span className="text-tertiary-dim font-mono font-bold sm:text-right">{formatCurrency(t.value)}</span>
+                                                </li>
+                                              ))}
+                                              {p.transactions.filter((t: any) => t.type === 'OUT' && !t.description.toLowerCase().includes('ignora')).length === 0 && (
+                                                <li className="text-xs text-slate-500 italic p-2">Nenhuma saída contabilizada.</li>
+                                              )}
+                                            </ul>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
                               )}
-                            </tr>
+                            </React.Fragment>
                           );
                         })}
                         {filteredProcesses.length === 0 && (
                           <tr>
-                            <td colSpan={showEstimativa ? 8 : 7} className="px-6 py-12 text-center text-sm text-slate-500">
+                            <td colSpan={showEstimativa ? 5 : 4} className="px-6 py-12 text-center text-sm text-slate-500">
                               Nenhum processo encontrado ou equivalente à pesquisa.
                             </td>
                           </tr>

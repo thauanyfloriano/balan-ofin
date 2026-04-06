@@ -382,13 +382,18 @@ export async function processFinancialFile(file: File): Promise<{
 export function exportReportToExcel(report: any) {
   const wsData = report.processes.map((p: ProcessSummary) => {
     let finalDi = p.details?.diInf || 0;
-    if (p.hasJmCorretora) finalDi = 0;
+    let statusDi = finalDi > 0 ? 'DI em aberto' : '';
+    if (p.hasJmCorretora) {
+      finalDi = p.details?.jmTransferSum || 0;
+      statusDi = 'Valor na JM';
+    }
     
     const row: any = {
       'PROCESSO': p.process,
       'DELTA (R$)': p.details?.deltaInf || 0,
       'NACIONALIZAÇÃO (R$)': p.details?.nacionalizacaoInf || 0,
       'DI (R$)': finalDi,
+      'SITUAÇÃO DI': statusDi,
       'ENTRADAS (R$)': p.totalIn,
       'SAÍDAS (R$)': p.totalOut,
       'SALDO (R$)': p.balance
