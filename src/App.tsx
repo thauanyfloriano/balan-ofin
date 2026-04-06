@@ -56,6 +56,13 @@ const App: React.FC = () => {
     p.process.toLowerCase().includes(searchTerm.toLowerCase())
   ) || [];
 
+  const filteredNFs = report?.nfSummaries ? report.nfSummaries.filter((nf: any) => {
+    const search = searchTerm.toLowerCase();
+    return (nf.processId?.toLowerCase() || '').includes(search) ||
+           (nf.clientName?.toLowerCase() || '').includes(search) ||
+           (String(nf.nfNumber).toLowerCase()).includes(search);
+  }) : [];
+
   return (
     <div className="flex h-screen w-full">
       {/* SideNavBar */}
@@ -236,14 +243,6 @@ const App: React.FC = () => {
                     </div>
 
                     {report.nfSummaries && (() => {
-                      const filteredNFs = report.nfSummaries
-                        .filter((nf: any) => {
-                          const search = searchTerm.toLowerCase();
-                          return (nf.processId?.toLowerCase() || '').includes(search) ||
-                                 (nf.clientName?.toLowerCase() || '').includes(search) ||
-                                 (String(nf.nfNumber).toLowerCase()).includes(search);
-                        });
-
                       if (filteredNFs.length === 0) {
                         return <p className="text-sm text-on-surface-variant italic">Nenhuma nota fiscal encontrada para esta pesquisa ou nenhum registro disponível.</p>;
                       }
@@ -292,7 +291,7 @@ const App: React.FC = () => {
                   <h3 className="font-headline text-xl font-extrabold tracking-tight">Processos Financeiros</h3>
                   <div className="flex flex-wrap items-center gap-3">
                     <button 
-                      onClick={() => exportReportToExcel(report)}
+                      onClick={() => exportReportToExcel({ processes: filteredProcesses, nfSummaries: filteredNFs, showEstimativa })}
                       className="flex items-center gap-2 px-4 py-2 rounded-lg bg-surface-container-high hover:bg-surface-bright text-xs font-bold transition-all border border-white/5"
                     >
                       <span className="material-symbols-outlined text-sm">download</span>

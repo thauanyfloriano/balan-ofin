@@ -229,7 +229,7 @@ export async function processFinancialFile(file: File): Promise<{
     }
 
     if (valOut > 0) {
-      if (!desc.includes('nacionalização') && !desc.includes('nacionalisacao')) {
+      if (!desc.includes('nacionaliza') && !desc.includes('nacionalisa')) {
         if (desc.includes('jm corretora')) {
           p.details.jmTransferSum += valOut;
         }
@@ -267,16 +267,16 @@ export async function processFinancialFile(file: File): Promise<{
     if (!Array.isArray(row)) return;
     const nfNumber = String(row[0] || '').trim();
     const emittedValue = Math.abs(cleanValue(row[4]));
+    
+    // A coluna F (índice 5) contém a identificação do processo na aba NF
+    const colFPid = String(row[5] || '').trim();
+    let pidMatch = colFPid ? normalizePid(colFPid) : findPidInRow(row);
+
     const clientName = String(row[2] || '').trim();
     
     // Validar se realmente é uma linha de Nota (nfNumber deve ser numérico ou conter algo válido)
     if (nfNumber && !isNaN(Number(nfNumber)) && emittedValue > 0) {
       if (!nfMap[nfNumber]) {
-        // Find PID in the NF row directly if possible
-        const pidMatch = findPidInRow(row);
-        
-        // Ensure that if it matches, it is added to process map if missing?
-        // Wait, if it wasn't in Extrato/INF cross, maybe it's completely missing, but we only calculate estimatedProfit for known processes
         nfMap[nfNumber] = { nfNumber, clientName, emittedValue, receivedValue: 0, diff: 0, processId: pidMatch || undefined };
       } else {
         nfMap[nfNumber].emittedValue += emittedValue;
@@ -292,15 +292,56 @@ export async function processFinancialFile(file: File): Promise<{
     
     const descFull = row.filter(c => c && typeof c === 'string').join(' ').toLowerCase();
     
-    // Procura por "nf568", "nf 568", etc.
+    // Preparar texto seguro sem datas e valores (R$) para não confundir com números de notas
+    const safeDesc = descFull.replace(/\d{1,2}\/\d{1,2}(?:\/\d{2,4})?/g, '')
+                             .replace(/r\$\s*\d+([.,]\d+)?/gi, '');
+
+    const matchedNFs: string[] = [];
+
+    // Melhoria na busca das notas
     for (const nfNumber of Object.keys(nfMap)) {
-      if (descFull.includes(`nf${nfNumber}`) || descFull.includes(`nf ${nfNumber}`)) {
-         nfMap[nfNumber].receivedValue += valIn;
-         const pidMatch = findPidInRow(row);
-         if (pidMatch && !nfMap[nfNumber].processId) {
-           nfMap[nfNumber].processId = pidMatch;
-         }
+      const cleanNum = Number(nfNumber).toString();
+      
+      const explicitRegex = new RegExp(`(?:nf|n\\.f\\.|nota(?:\\s*fiscal)?|nt|doc)\\s*[-/]?\\s*0*${cleanNum}\\b`, 'i');
+      const numberRegex = new RegExp(`\\b0*${cleanNum}\\b`);
+      
+      const hasKeywords = /(?:nf|n\.f\.|nota|pagto|pagamento|receb|recebimento|pix|liq)/i.test(safeDesc);
+      
+      if (explicitRegex.test(safeDesc) || safeDesc.includes(`nf${nfNumber}`) || safeDesc.includes(`nf ${nfNumber}`)) {
+         matchedNFs.push(nfNumber);
+      } else if (hasKeywords && numberRegex.test(safeDesc)) {
+         matchedNFs.push(nfNumber);
+      } else if (numberRegex.test(safeDesc) && Math.abs(valIn - nfMap[nfNumber].emittedValue) < 0.01) {
+         matchedNFs.push(nfNumber);
       }
+    }
+
+    if (matchedNFs.length > 0) {
+      const totalEmitted = matchedNFs.reduce((sum, num) => sum + nfMap[num].emittedValue, 0);
+      
+      matchedNFs.forEach(nfNumber => {
+        const nf = nfMap[nfNumber];
+        
+        // Distribui o valor recebido caso haja múltiplas notas nesta mesma linha
+        let allocation = 0;
+        if (matchedNFs.length === 1) {
+           allocation = valIn;
+        } else {
+           if (Math.abs(totalEmitted - valIn) < 0.1) {
+             allocation = nf.emittedValue;
+           } else {
+             // Distribuição proporcional ao valor emitido
+             allocation = (totalEmitted > 0) ? (nf.emittedValue / totalEmitted) * valIn : 0;
+           }
+        }
+        
+        nf.receivedValue += allocation;
+        
+        const pidMatch = findPidInRow(row);
+        if (pidMatch && !nf.processId) {
+          nf.processId = pidMatch;
+        }
+      });
     }
   });
 
@@ -311,9 +352,21 @@ export async function processFinancialFile(file: File): Promise<{
 
   // Update Estimated Profit
   processesList.forEach(p => {
-    const processNFs = nfSummaries.filter(nf => nf.processId === p.process && nf.diff > 0);
-    const pendingNfSum = processNFs.reduce((sum, nf) => sum + nf.diff, 0);
-    p.estimatedProfit = p.balance + pendingNfSum;
+    // Pegamos as notas associadas a este processo
+    const processNFs = nfSummaries.filter(nf => nf.processId === p.process);
+    const totalEmitted = processNFs.reduce((sum, nf) => sum + nf.emittedValue, 0);
+    
+    // Regra explicada:
+    // Se o processo JÁ teve entradas reais no extrato (> 0), o lucro estimado 
+    // é exatamente o que está no saldo final da operação naquele momento.
+    // Se a entrada ainda está ZERADA, usamos os valores emitidos na aba NF 
+    // como estimativa do que vai entrar, e deduzimos do que já gastou (Saídas) 
+    // para enxergar o lucro esperado.
+    if (p.totalIn === 0) {
+       p.estimatedProfit = p.balance + totalEmitted;
+    } else {
+       p.estimatedProfit = p.balance;
+    }
   });
   // =======================================================
 
@@ -328,40 +381,52 @@ export async function processFinancialFile(file: File): Promise<{
 
 export function exportReportToExcel(report: any) {
   const wsData = report.processes.map((p: ProcessSummary) => {
-    let finalDi = p.details.diInf;
+    let finalDi = p.details?.diInf || 0;
     if (p.hasJmCorretora) finalDi = 0;
     
-    return {
+    const row: any = {
       'PROCESSO': p.process,
-      'DELTA (R$)': p.details.deltaInf || 0,
-      'NACIONALIZAÇÃO (R$)': p.details.nacionalizacaoInf || 0,
+      'DELTA (R$)': p.details?.deltaInf || 0,
+      'NACIONALIZAÇÃO (R$)': p.details?.nacionalizacaoInf || 0,
       'DI (R$)': finalDi,
       'ENTRADAS (R$)': p.totalIn,
       'SAÍDAS (R$)': p.totalOut,
       'SALDO (R$)': p.balance
     };
+
+    if (report.showEstimativa) {
+       row['LUCRO ESTIMADO (R$)'] = p.estimatedProfit || 0;
+    }
+
+    return row;
   });
 
   const ws = XLSX.utils.json_to_sheet(wsData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Balancete");
 
-  // Adiciona a aba 'Valores Pendentes' se existirem notas com diferenças
+  // Adiciona a aba 'Valores Pendentes' com todas as notas presentes na tela
   if (report.nfSummaries && report.nfSummaries.length > 0) {
-    const pendencias = report.nfSummaries.filter((nf: any) => Math.abs(nf.diff) > 0.01);
-    if (pendencias.length > 0) {
-      const wsPendenciasData = pendencias.map((nf: any) => ({
+    const wsPendenciasData = report.nfSummaries.map((nf: any) => {
+      let situacao = 'Quitado';
+      if (nf.diff > 0.01) situacao = 'A receber';
+      else if (nf.diff < -0.01) situacao = 'Recebido a mais';
+
+      return {
         'Nº NOTA': nf.nfNumber,
         'PROCESSO': nf.processId || '-',
         'CLIENTE': nf.clientName,
         'NOTA EMITIDA (R$)': nf.emittedValue,
         'RECEBIDO (R$)': nf.receivedValue,
-        'DIFERENÇA (R$)': nf.diff
-      }));
-      const wsPendencias = XLSX.utils.json_to_sheet(wsPendenciasData);
-      XLSX.utils.book_append_sheet(wb, wsPendencias, "Valores Pendentes");
-    }
+        'DIFERENÇA (R$)': Math.abs(nf.diff) > 0.01 ? nf.diff : 0,
+        'SITUAÇÃO': situacao
+      };
+    });
+    
+    const wsPendencias = XLSX.utils.json_to_sheet(wsPendenciasData);
+    XLSX.utils.book_append_sheet(wb, wsPendencias, "Valores Pendentes");
   }
 
   XLSX.writeFile(wb, "Balancete_Financeiro.xlsx");
 }
+
