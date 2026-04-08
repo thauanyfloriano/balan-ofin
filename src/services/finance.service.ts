@@ -213,7 +213,12 @@ export async function processFinancialFile(file: File): Promise<{
     const descFull = row.filter(c => c && typeof c === 'string').join(' ');
     const colC = String(row[2] || '').toLowerCase();
     const desc = descFull.toLowerCase();
-    const shortDesc = String(row[2] || row[1] || (valIn > 0 ? 'Entrada' : 'Saída'));
+    // Se a coluna C for o próprio PID, usar coluna B ou A como descrição
+    const colCStr = String(row[2] || '').trim();
+    const colCIsPid = pid && normalizePid(colCStr) === pid;
+    const shortDesc = String(
+      (!colCIsPid && row[2]) || row[1] || row[0] || (valIn > 0 ? 'Entrada' : 'Saída')
+    );
 
     // Regra: Se a coluna C contém "delta", não entra na soma (geralmente processado via INF)
     if (colC.includes('delta')) {
@@ -229,7 +234,8 @@ export async function processFinancialFile(file: File): Promise<{
     }
 
     if (valOut > 0) {
-      if (!desc.includes('nacionaliza') && !desc.includes('nacionalisa')) {
+      const isNacionalizacao = desc.includes('nacionaliza') || desc.includes('nacionalisa') || desc.includes('neeman');
+      if (!isNacionalizacao) {
         if (desc.includes('jm corretora')) {
           p.details.jmTransferSum += valOut;
         }
