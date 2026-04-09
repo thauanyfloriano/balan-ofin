@@ -332,11 +332,6 @@ const App: React.FC = () => {
                       <tbody className="divide-y divide-white/5">
                         {filteredProcesses.map((p: any) => {
                           let finalDi = p.details?.diInf || 0;
-                          let diDesc = finalDi > 0 ? "DI em aberto" : "";
-                          if (p.hasJmCorretora) {
-                            finalDi = p.details?.jmTransferSum || 0;
-                            diDesc = "Valor na JM";
-                          }
                           const isExpanded = expandedProcess === p.process;
                           return (
                             <React.Fragment key={p.process}>
@@ -381,11 +376,14 @@ const App: React.FC = () => {
                                           </div>
                                           <div className="flex justify-between items-center text-xs border-t border-white/5 pt-2">
                                             <span className="text-slate-400">DI:</span>
-                                            <div className="text-right">
-                                              <span className="font-medium text-slate-300">{formatCurrency(finalDi)}</span>
-                                              {diDesc && <span className="block text-[9px] text-primary/80 mt-0.5">{diDesc}</span>}
-                                            </div>
+                                            <span className="font-medium text-slate-300">{formatCurrency(finalDi)}</span>
                                           </div>
+                                          {p.hasJmCorretora && (
+                                            <div className="flex justify-between items-center text-xs border-t border-white/5 pt-2">
+                                              <span className="text-slate-400">VALOR JM (DEMONSTRATIVO):</span>
+                                              <span className="font-medium text-slate-300 opacity-60">{formatCurrency(p.details?.jmTransferSum || 0)}</span>
+                                            </div>
+                                          )}
                                         </div>
                                       </div>
 

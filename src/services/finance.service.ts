@@ -235,14 +235,16 @@ export async function processFinancialFile(file: File): Promise<{
 
     if (valOut > 0) {
       const isNacionalizacao = desc.includes('nacionaliza') || desc.includes('nacionalisa') || desc.includes('neeman');
-      if (!isNacionalizacao) {
-        if (desc.includes('jm corretora')) {
-          p.details.jmTransferSum += valOut;
-        }
+      const isJmCorretora = desc.includes('jm corretora');
+      
+      if (isNacionalizacao) {
+         p.transactions.push({ description: `${shortDesc} (Ignorado ${sourceName})`, value: valOut, type: 'OUT', source: sourceName });
+      } else if (isJmCorretora) {
+         p.details.jmTransferSum += valOut;
+         p.transactions.push({ description: `${shortDesc} (Ignorado JM - Substituído por DI)`, value: valOut, type: 'OUT', source: sourceName });
+      } else {
         p.details.extratoNegativeSum += valOut;
         p.transactions.push({ description: shortDesc, value: valOut, type: 'OUT', source: sourceName });
-      } else {
-         p.transactions.push({ description: `${shortDesc} (Ignorado ${sourceName})`, value: valOut, type: 'OUT', source: sourceName });
       }
     }
   };
@@ -255,11 +257,7 @@ export async function processFinancialFile(file: File): Promise<{
 
   const processesList = Object.values(processMap).map(p => {
     let finalDi = p.details.diInf;
-    if (p.hasJmCorretora) {
-       finalDi = 0; // Ignora DI porque a transferência JM assume este custo
-       p.details.jmCorretoraAdjusted = true;
-       p.transactions.push({ description: 'DI (INF) - IGNORADA (Substituída pelo valor transferido à JM)', value: 0, type: 'OUT', source: 'INF' });
-    }
+    // NÃO zera mais a DI e NÃO usa o valor da JM como custo. JM é só demonstrativo.
     p.totalOut = p.details.extratoNegativeSum + p.details.deltaInf + p.details.nacionalizacaoInf + finalDi;
     p.balance = p.totalIn - p.totalOut;
     p.estimatedProfit = p.balance; // Will be updated later
@@ -363,14 +361,15 @@ export async function processFinancialFile(file: File): Promise<{
     const totalEmitted = processNFs.reduce((sum, nf) => sum + nf.emittedValue, 0);
     
     // Regra explicada:
-    // Se o processo JÁ teve entradas reais no extrato (> 0), o lucro estimado 
-    // é exatamente o que está no saldo final da operação naquele momento.
-    // Se a entrada ainda está ZERADA, usamos os valores emitidos na aba NF 
-    // como estimativa do que vai entrar, e deduzimos do que já gastou (Saídas) 
-    // para enxergar o lucro esperado.
-    if (p.totalIn === 0) {
-       p.estimatedProfit = p.balance + totalEmitted;
+    // Se o valor de ENTRADAS no extrato (p.totalIn) for menor que o valor total das NFs 
+    // (com margem de 2,00 para arredondamentos), significa que parte ou todas as NFs 
+    // ainda não foram recebidas.
+    // Nesse caso, usamos SOMENTE o valor emitido nas NFs como base de receita.
+    if (totalEmitted > 0 && p.totalIn < (totalEmitted - 2.0)) {
+       p.estimatedProfit = totalEmitted - p.totalOut;
     } else {
+       // Se o processo já recebeu as NFs integralmente (ou mais) no extrato,
+       // usamos o saldo real (que contabiliza o excedente, caso tenha tido).
        p.estimatedProfit = p.balance;
     }
   });
@@ -387,19 +386,12 @@ export async function processFinancialFile(file: File): Promise<{
 
 export function exportReportToExcel(report: any) {
   const wsData = report.processes.map((p: ProcessSummary) => {
-    let finalDi = p.details?.diInf || 0;
-    let statusDi = finalDi > 0 ? 'DI em aberto' : '';
-    if (p.hasJmCorretora) {
-      finalDi = p.details?.jmTransferSum || 0;
-      statusDi = 'Valor na JM';
-    }
-    
     const row: any = {
       'PROCESSO': p.process,
       'DELTA (R$)': p.details?.deltaInf || 0,
       'NACIONALIZAÇÃO (R$)': p.details?.nacionalizacaoInf || 0,
-      'DI (R$)': finalDi,
-      'SITUAÇÃO DI': statusDi,
+      'DI (R$)': p.details?.diInf || 0,
+      'VALOR JM (DEMONSTRATIVO)': p.details?.jmTransferSum || 0,
       'ENTRADAS (R$)': p.totalIn,
       'SAÍDAS (R$)': p.totalOut,
       'SALDO (R$)': p.balance
