@@ -168,15 +168,6 @@ export async function processFinancialFile(file: File): Promise<{
     if (!pid || !intersectionPids.has(pid)) return;
     const p = getOrCreateProcess(pid);
     
-    // Processa DELTA
-    if (deltaCol !== -1) {
-      const v = Math.abs(cleanValue(row[deltaCol]));
-      if (v > 0 && p.details.deltaInf === 0) {
-        p.details.deltaInf = v;
-        p.transactions.push({ description: 'DELTA (INF)', value: v, type: 'OUT', source: 'INF' });
-      }
-    }
-    
     // Processa NACIONALIZAÇÃO
     if (nacCol !== -1) {
       const v = Math.abs(cleanValue(row[nacCol]));
@@ -195,6 +186,14 @@ export async function processFinancialFile(file: File): Promise<{
       }
     }
 
+    // Processa DELTA
+    if (deltaCol !== -1) {
+      const v = Math.abs(cleanValue(row[deltaCol]));
+      if (v > 0 && p.details.deltaInf === 0) {
+        p.details.deltaInf = v;
+        p.transactions.push({ description: 'DELTA CÂMBIO (INF)', value: v, type: 'OUT', source: 'INF' });
+      }
+    }
   });
 
   // Função auxiliar para processar linhas com padrão Col D = Entrada, Col E = Saída
@@ -216,16 +215,34 @@ export async function processFinancialFile(file: File): Promise<{
     // Se a coluna C for o próprio PID, usar coluna B ou A como descrição
     const colCStr = String(row[2] || '').trim();
     const colCIsPid = pid && normalizePid(colCStr) === pid;
-    const shortDesc = String(
-      (!colCIsPid && row[2]) || row[1] || row[0] || (valIn > 0 ? 'Entrada' : 'Saída')
-    );
-
-    // Regra: Se a coluna C contém "delta", não entra na soma (geralmente processado via INF)
-    if (colC.includes('delta')) {
-      p.transactions.push({ description: `${shortDesc} (Ignorado Delta)`, value: Math.max(valIn, valOut), type: valIn > 0 ? 'IN' : 'OUT', source: sourceName });
-      return;
+    let dateStr = '';
+    const rawDate = row[0];
+    if (rawDate) {
+      if (typeof rawDate === 'number' && rawDate > 30000) {
+        // Converter data serial do Excel (1900 date system)
+        const date = new Date((rawDate - 25569) * 86400 * 1000);
+        date.setMinutes(date.getMinutes() + date.getTimezoneOffset());
+        const d = String(date.getDate()).padStart(2, '0');
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        const y = date.getFullYear();
+        dateStr = `${d}/${m}/${y}`;
+      } else {
+        dateStr = String(rawDate).split(' ')[0].trim();
+      }
     }
 
+    const rawDesc = String(
+      (!colCIsPid && row[2]) || row[1] || row[0] || (valIn > 0 ? 'Entrada' : 'Saída')
+    );
+    
+    // Anexar data
+    const shortDesc = dateStr && dateStr !== rawDesc && sourceName === 'EXTRATO' 
+      ? `${dateStr} - ${rawDesc}` 
+      : rawDesc;
+
+    // Regra: Identificar se é JM Corretora/Câmbio
+    const isJm = desc.includes('jm corretora') || desc.includes('jm cambio') || desc.includes('jm câmbio');
+    if (isJm) p.hasJmCorretora = true;
     if (desc.includes('jm corretora')) p.hasJmCorretora = true;
 
     if (valIn > 0) {
@@ -235,13 +252,14 @@ export async function processFinancialFile(file: File): Promise<{
 
     if (valOut > 0) {
       const isNacionalizacao = desc.includes('nacionaliza') || desc.includes('nacionalisa') || desc.includes('neeman');
-      const isJmCorretora = desc.includes('jm corretora');
-      
-      if (isNacionalizacao) {
+      const isDI = /\bdi\b/.test(desc) || desc.includes('d.i.');
+      const isDeltaOrFechamento = desc.includes('delta') || desc.includes('fechamento') || ((desc.includes('cambio') || desc.includes('câmbio')) && !isJm);
+
+      if (isNacionalizacao || isDI || isDeltaOrFechamento) {
          p.transactions.push({ description: `${shortDesc} (Ignorado ${sourceName})`, value: valOut, type: 'OUT', source: sourceName });
-      } else if (isJmCorretora) {
+      } else if (isJm) {
          p.details.jmTransferSum += valOut;
-         p.transactions.push({ description: `${shortDesc} (Ignorado JM - Substituído por DI)`, value: valOut, type: 'OUT', source: sourceName });
+         p.transactions.push({ description: `${shortDesc} (Câmbio JM)`, value: valOut, type: 'OUT', source: sourceName });
       } else {
         p.details.extratoNegativeSum += valOut;
         p.transactions.push({ description: shortDesc, value: valOut, type: 'OUT', source: sourceName });
@@ -257,8 +275,9 @@ export async function processFinancialFile(file: File): Promise<{
 
   const processesList = Object.values(processMap).map(p => {
     let finalDi = p.details.diInf;
-    // NÃO zera mais a DI e NÃO usa o valor da JM como custo. JM é só demonstrativo.
-    p.totalOut = p.details.extratoNegativeSum + p.details.deltaInf + p.details.nacionalizacaoInf + finalDi;
+    // Lógica solicitada: Se houver valor de JM Câmbio no extrato, usa ele. Caso contrário, usa o valor da DI.
+    const cambioCost = p.details.jmTransferSum > 0 ? p.details.jmTransferSum : finalDi;
+    p.totalOut = p.details.extratoNegativeSum + p.details.nacionalizacaoInf + p.details.deltaInf + cambioCost;
     p.balance = p.totalIn - p.totalOut;
     p.estimatedProfit = p.balance; // Will be updated later
     return p;
@@ -388,9 +407,9 @@ export function exportReportToExcel(report: any) {
   const wsData = report.processes.map((p: ProcessSummary) => {
     const row: any = {
       'PROCESSO': p.process,
-      'DELTA (R$)': p.details?.deltaInf || 0,
       'NACIONALIZAÇÃO (R$)': p.details?.nacionalizacaoInf || 0,
       'DI (R$)': p.details?.diInf || 0,
+      'DELTA (R$)': p.details?.deltaInf || 0,
       'VALOR JM (DEMONSTRATIVO)': p.details?.jmTransferSum || 0,
       'ENTRADAS (R$)': p.totalIn,
       'SAÍDAS (R$)': p.totalOut,

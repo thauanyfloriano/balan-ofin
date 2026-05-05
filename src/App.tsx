@@ -365,19 +365,29 @@ const App: React.FC = () => {
                                       {/* CUSTOS INF */}
                                       <div>
                                         <h4 className="text-[10px] font-bold text-primary uppercase tracking-widest mb-3 flex items-center gap-2"><span className="material-symbols-outlined text-sm">receipt_long</span> Valores Ocultos (INF)</h4>
-                                        <div className="space-y-2 bg-[#0c0e14] p-4 rounded-xl border border-white/5">
-                                          <div className="flex justify-between items-center text-xs">
-                                            <span className="text-slate-400">DELTA:</span>
-                                            <span className="font-medium text-slate-300">{formatCurrency(p.details?.deltaInf || 0)}</span>
-                                          </div>
-                                          <div className="flex justify-between items-center text-xs border-t border-white/5 pt-2">
-                                            <span className="text-slate-400">NACIONALIZAÇÃO:</span>
-                                            <span className="font-medium text-slate-300">{formatCurrency(p.details?.nacionalizacaoInf || 0)}</span>
-                                          </div>
-                                          <div className="flex justify-between items-center text-xs border-t border-white/5 pt-2">
-                                            <span className="text-slate-400">DI:</span>
-                                            <span className="font-medium text-slate-300">{formatCurrency(finalDi)}</span>
-                                          </div>
+                                          <div className="space-y-2 bg-[#0c0e14] p-4 rounded-xl border border-white/5">
+                                            <div className="flex justify-between items-center text-xs">
+                                              <span className="text-slate-400">NACIONALIZAÇÃO:</span>
+                                              <span className="font-medium text-slate-300">{formatCurrency(p.details?.nacionalizacaoInf || 0)}</span>
+                                            </div>
+                                            <div className="flex justify-between items-center text-xs border-t border-white/5 pt-2">
+                                              <span className="text-slate-400">DELTA:</span>
+                                              <span className="font-medium text-slate-300">{formatCurrency(p.details?.deltaInf || 0)}</span>
+                                            </div>
+                                            <div className="flex justify-between items-center text-xs border-t border-white/5 pt-2">
+                                              <span className="text-slate-400">
+                                                {p.details?.jmTransferSum > 0 ? 'DI (Substituído por JM):' : 'DI:'}
+                                              </span>
+                                              <span className={`font-medium ${p.details?.jmTransferSum > 0 ? 'text-slate-500 line-through' : 'text-slate-300'}`}>
+                                                {formatCurrency(finalDi)}
+                                              </span>
+                                            </div>
+                                            {p.details?.jmTransferSum > 0 && (
+                                              <div className="flex justify-between items-center text-xs border-t border-primary/20 pt-2 bg-primary/5 -mx-4 px-4 py-1">
+                                                <span className="text-primary font-bold">CÂMBIO JM (EFETIVO):</span>
+                                                <span className="font-bold text-primary">{formatCurrency(p.details.jmTransferSum)}</span>
+                                              </div>
+                                            )}
                                           {p.hasJmCorretora && (
                                             <div className="flex justify-between items-center text-xs border-t border-white/5 pt-2">
                                               <span className="text-slate-400">VALOR JM (DEMONSTRATIVO):</span>
