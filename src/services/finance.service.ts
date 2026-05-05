@@ -210,7 +210,6 @@ export async function processFinancialFile(file: File): Promise<{
     
     // Identificação de descrição para regras (Nacionalização, JM Corretora, etc)
     const descFull = row.filter(c => c && typeof c === 'string').join(' ');
-    const colC = String(row[2] || '').toLowerCase();
     const desc = descFull.toLowerCase();
     // Se a coluna C for o próprio PID, usar coluna B ou A como descrição
     const colCStr = String(row[2] || '').trim();
